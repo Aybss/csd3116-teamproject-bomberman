@@ -1,0 +1,19 @@
+# Build output
+build/
+build-*/
+*.o
+*.a
+gmon.out
+perf.data*
+
+# Private keys from security/gen_security.sh. Never commit.
+security/out/
+*.pem
+*.p7s
+*.srl
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+.DS_Store
