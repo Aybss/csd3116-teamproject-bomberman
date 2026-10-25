@@ -1,0 +1,79 @@
+// Blast Arena - DDS messages.
+//
+// CMake runs idlc on this file for you. By hand: idlc -l c messages.idl
+//
+// Notes:
+//  - Join messages have a random nonce, so a client only reads its own reply.
+//  - Input sends the held keys and a bomb counter, only when something changes.
+//  - GameState (players, bombs) is sent often. MapState (tiles) is sent only
+//    when a tile changes.
+//  - Only fixed-size types, so no heap use for each message.
+
+module Blast
+{
+  // Client -> Server: ask for a slot.
+  struct JoinRequest
+  {
+    @key unsigned long long nonce;   // random per run
+    string<15> name;                 // shown on the scoreboard
+  };
+
+  // Server -> Clients: reply to a JoinRequest.
+  struct JoinResponse
+  {
+    @key unsigned long long nonce;   // same as the request
+    long player_id;                  // 1..5, or 0 if the server is full
+  };
+
+  // Client -> Server: held keys and bomb presses.
+  // Key is player_id. Disposing the instance means the player left.
+  struct Input
+  {
+    @key long player_id;
+    unsigned long seq;               // goes up with every write
+    octet keys;                      // BA_KEY_UP | BA_KEY_DOWN | BA_KEY_LEFT | BA_KEY_RIGHT
+    octet bomb_seq;                  // +1 per bomb press (a counter, so no press is lost)
+  };
+
+  struct PlayerState
+  {
+    boolean active;                  // slot is used
+    boolean alive;                   // still in this round
+    float x;                         // position in tiles
+    float y;
+    long score;                      // rounds won
+    octet bombs;                     // max bombs at once
+    octet range;                     // blast range in tiles
+    octet speed;                     // speed power-ups taken
+    string<15> name;
+  };
+
+  struct BombState
+  {
+    boolean active;
+    octet x;                         // tile
+    octet y;
+    octet owner;                     // player id
+    short fuse_ms;                   // time left until it explodes
+  };
+
+  // Server -> Clients, about 30 times a second.
+  struct GameState
+  {
+    unsigned long tick;              // server tick
+    octet phase;                     // BA_PHASE_LOBBY .. BA_PHASE_ROUND_OVER
+    long phase_ms;                   // time left in this phase
+    long winner;                     // winner of the last round, 0 = draw
+    unsigned long map_version;       // which MapState this matches
+    PlayerState players[5];          // index = player id - 1
+    BombState bombs[25];             // 5 players x 5 bombs
+  };
+
+  // Server -> Clients, only when the map changes.
+  // tiles[y * 19 + x]: low 7 bits = tile type, bit 7 = flame.
+  struct MapState
+  {
+    unsigned long version;
+    octet tiles[247];                // 19 x 13
+  };
+};
