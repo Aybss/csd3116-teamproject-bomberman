@@ -34,9 +34,27 @@ if [ "${INSECURE:-}" = "1" ]; then
     exec $PRIO ./build/ba_server --secure "$SEC/local_none.xml"
 fi
 
-if [ ! -f "$SEC/server_cert.pem" ] || [ ! -f "$SEC/ca_key.pem" ]; then
-    echo "No security files yet, making them..."
+# Prints why the security files must be made again, or nothing if they are fine.
+keys_outdated() {
+    local ca="$SEC/ca_cert.pem" srv="$SEC/server_cert.pem"
+    if [ ! -f "$ca" ] || [ ! -f "$SEC/ca_key.pem" ] || [ ! -f "$srv" ]; then
+        echo "No security files yet"
+    elif ! openssl x509 -in "$ca" -noout -text | grep -q "Certificate Sign"; then
+        echo "The security files are from an older version of this script"
+    elif ! openssl x509 -in "$ca" -noout -checkend $((400 * 86400)) > /dev/null; then
+        # 400 days > the 365 days of a player certificate, so none outlives the CA
+        echo "The CA expires soon"
+    elif ! openssl x509 -in "$srv" -noout -checkend $((30 * 86400)) > /dev/null; then
+        echo "The server certificate expires soon"
+    fi
+}
+reason="$(keys_outdated)"
+if [ -n "$reason" ]; then
+    echo "$reason, making new ones..."
     bash ./security/gen_security.sh 5
+    if [ "$reason" != "No security files yet" ]; then
+        echo "(Players who joined before need the new join code once.)"
+    fi
     echo
 fi
 need_files server

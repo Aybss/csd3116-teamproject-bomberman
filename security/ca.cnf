@@ -1,0 +1,39 @@
+# ca.cnf - how our CA signs certificates. Used by both security/gen_security.sh
+# (CA, server, clientN) and scripts/join_code.py (players who join with a code),
+# so every certificate gets the same profile.
+#
+# The caller sets CADIR to an empty temporary folder (openssl ca keeps its
+# bookkeeping there) and passes the dates with -startdate / -enddate.
+
+[ca]
+default_ca = blast
+
+[blast]
+database        = $ENV::CADIR/index.txt
+new_certs_dir   = $ENV::CADIR
+serial          = $ENV::CADIR/serial
+default_md      = sha256
+policy          = any_name
+unique_subject  = no
+# Ignore any extensions in the request: the CA decides what a certificate may do.
+copy_extensions = none
+email_in_dn     = no
+
+[any_name]
+countryName      = optional
+organizationName = optional
+commonName       = optional
+
+# The CA itself. digitalSignature is needed because the CA also signs
+# governance.p7s and permissions.p7s (S/MIME); without it Cyclone refuses them.
+[v3_ca]
+basicConstraints     = critical, CA:TRUE
+keyUsage             = critical, keyCertSign, cRLSign, digitalSignature
+subjectKeyIdentifier = hash
+
+# The server and every player: may sign the DDS Security handshake, nothing else.
+[v3_leaf]
+basicConstraints       = critical, CA:FALSE
+keyUsage               = critical, digitalSignature
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid:always

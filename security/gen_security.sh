@@ -20,7 +20,8 @@ set -euo pipefail
 NUM_CLIENTS="${1:-5}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$HERE/out"
-DAYS=365
+DAYS=365        # server, clients and permissions
+CA_DAYS=3650    # the CA outlives every certificate it signs
 mkdir -p "$OUT"
 cd "$OUT"
 
@@ -32,42 +33,36 @@ T_INPUT="BA_Input"
 T_STATE="BA_GameState"
 T_MAP="BA_MapState"
 
-# Certificates are valid from yesterday: a player whose clock is a little
-# behind the host's (WSL clocks drift after sleep) would otherwise reject a
-# certificate made "now" as not yet valid. `openssl ca` can set the start
-# date (`req -x509` and `x509 -req` cannot in OpenSSL 3.0).
-START="$(date -u -d "-1 day" +%y%m%d%H%M%SZ 2>/dev/null || date -u -v-1d +%y%m%d%H%M%SZ)"
-END="$(date -u -d "+$DAYS days" +%y%m%d%H%M%SZ 2>/dev/null || date -u -v+${DAYS}d +%y%m%d%H%M%SZ)"
+# utc DAYS_FROM_NOW FORMAT - a UTC time relative to NOW (GNU or BSD date).
+# Every date below is computed from the same NOW, so they all line up.
+NOW="$(date -u +%s)"
+utc() {
+    local t=$(( NOW + $1 * 86400 ))
+    date -u -d "@$t" +"$2" 2>/dev/null || date -u -r "$t" +"$2"
+}
+
+# Everything is valid from yesterday: a player whose clock is a little behind
+# the host's (WSL clocks drift after sleep) would otherwise reject a
+# certificate made "now" as not yet valid. `openssl ca` can set the start date
+# (`req -x509` and `x509 -req` cannot in OpenSSL 3.0).
+CERT_FMT="%Y%m%d%H%M%SZ"
+START="$(utc -1 "$CERT_FMT")"
+END="$(utc "$DAYS" "$CERT_FMT")"
+CA_END="$(utc "$CA_DAYS" "$CERT_FMT")"
+
+# openssl ca keeps its bookkeeping in CADIR (see security/ca.cnf).
 CADIR="$(mktemp -d)"
+export CADIR
 trap 'rm -rf "$CADIR"' EXIT
 : > "$CADIR/index.txt"
 openssl rand -hex 16 > "$CADIR/serial"
-cat > "$CADIR/ca.cnf" <<EOF
-[ca]
-default_ca = blast
-[blast]
-database        = $CADIR/index.txt
-new_certs_dir   = $CADIR
-serial          = $CADIR/serial
-default_md      = sha256
-policy          = any_name
-unique_subject  = no
-copy_extensions = none
-email_in_dn     = no
-[any_name]
-countryName      = optional
-organizationName = optional
-commonName       = optional
-[v3_ca]
-basicConstraints     = critical, CA:TRUE
-subjectKeyIdentifier = hash
-EOF
-sign() {   # sign CSR_FILE OUT_FILE [extra openssl ca options]
-    local csr="$1" out="$2" log
-    shift 2
-    if ! log="$(openssl ca -batch -notext -config "$CADIR/ca.cnf" -in "$csr" -out "$out" \
-                -startdate "$START" -enddate "$END" "$@" 2>&1)"; then
-        echo "$log"
+
+sign() {   # sign CSR_FILE OUT_FILE END_DATE [extra openssl ca options]
+    local csr="$1" out="$2" end="$3" log
+    shift 3
+    if ! log="$(openssl ca -batch -notext -config "$HERE/ca.cnf" -in "$csr" -out "$out" \
+                -startdate "$START" -enddate "$end" "$@" 2>&1)"; then
+        echo "$log" >&2
         return 1
     fi
 }
@@ -76,13 +71,13 @@ echo "== 1. Certificate Authority"
 # EC P-256 keys: supported by Cyclone and faster to handshake than RSA-2048.
 openssl ecparam -name prime256v1 -genkey -noout -out ca_key.pem
 openssl req -new -key ca_key.pem -subj "/C=SG/O=BlastArena/CN=BlastArena CA" -out ca.csr
-sign ca.csr ca_cert.pem -selfsign -keyfile ca_key.pem -extensions v3_ca
+sign ca.csr ca_cert.pem "$CA_END" -selfsign -keyfile ca_key.pem -extensions v3_ca
 rm -f ca.csr
 
 make_identity() {   # $1 = name (server, client1, ...)
     openssl ecparam -name prime256v1 -genkey -noout -out "$1_key.pem"
     openssl req -new -key "$1_key.pem" -subj "/C=SG/O=BlastArena/CN=$1" -out "$1.csr"
-    sign "$1.csr" "$1_cert.pem" -cert ca_cert.pem -keyfile ca_key.pem
+    sign "$1.csr" "$1_cert.pem" "$END" -cert ca_cert.pem -keyfile ca_key.pem -extensions v3_leaf
     rm -f "$1.csr"
 }
 
@@ -123,10 +118,9 @@ cat > governance.xml <<EOF
 EOF
 
 echo "== 4. Permissions (who may publish / subscribe what)"
-# Valid from yesterday, so a machine whose clock is a little behind does not
-# see the permissions as "not yet valid".
-NOT_BEFORE="$(date -u -d "-1 day" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -v-1d +%Y-%m-%dT%H:%M:%S)"
-NOT_AFTER="$(date -u -d "+$DAYS days" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -v+${DAYS}d +%Y-%m-%dT%H:%M:%S)"
+# Same window as the certificates (from yesterday, for DAYS days).
+NOT_BEFORE="$(utc -1 %Y-%m-%dT%H:%M:%S)"
+NOT_AFTER="$(utc "$DAYS" %Y-%m-%dT%H:%M:%S)"
 
 grant() {   # $1 = identity name, $2 = publish topics, $3 = subscribe topics
     local pub="" sub="" t

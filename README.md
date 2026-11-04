@@ -27,8 +27,12 @@ WSL with Ubuntu 22.04 (Cyclone DDS 0.8.2) or 24.04 (Cyclone DDS 0.10.4), or macO
 ```bash
 sudo apt update
 sudo apt install -y build-essential cmake libgl1-mesa-dev libglfw3-dev \
-                    cyclonedds-dev cyclonedds-tools openssl
+                    cyclonedds-dev cyclonedds-tools openssl python3
+sudo apt install -y mesa-utils     # optional: lets join.sh draw with the GPU in WSL
 ```
+
+The scripts in `scripts/` (playing across machines) are written for Linux and WSL. On macOS, use the
+`./build/...` commands below.
 
 ## Build
 
@@ -95,9 +99,14 @@ code gets nothing, and a fake host cannot hand out its own CA. The files are sav
 so next time against the same host `./scripts/join.sh HOST_ADDRESS YourName` is enough. A new code is made
 every time `host.sh` starts. (Details in `scripts/join_code.py`.)
 
-The scripts also help against lag: `host.sh` runs the server at a higher priority, so a game window on
-the host cannot slow it down, and `join.sh` draws with the GPU in WSL when it can, and picks an NVIDIA or AMD GPU over a
-built-in Intel one (it prints which GPU it uses when it starts).
+`host.sh` makes the security files itself: the first time, when they come from an older version of the
+script, or when a certificate is about to expire. It prints why. Players then join once more with the new code.
+Stop `host.sh` with **Ctrl+C**; Ctrl+Z only pauses it and keeps its ports busy.
+
+The scripts also help against lag: on the host, `join.sh local` gives the game window a lower priority than
+the server (and `host.sh` raises the server's priority when run as root, as WSL often is). In WSL, `join.sh`
+draws with the GPU when it can and picks an NVIDIA or AMD GPU over a built-in Intel one; this needs
+`glxinfo` (`sudo apt install mesa-utils`) and it prints which GPU it uses.
 
 **If it does not work or feels laggy**
 
@@ -190,6 +199,13 @@ src/client/
 tests/test_game.c         unit tests for game.c
 tests/test_interp.c       unit tests + jitter simulation for interp.c
 security/gen_security.sh  creates certificates, governance, permissions, configs
+security/ca.cnf           how the CA signs (shared by gen_security.sh and join_code.py)
+scripts/host.sh           host a game: makes security files if needed, prints address + join code
+scripts/join.sh           join a host (with the join code the first time)
+scripts/join_code.py      hands out player certificates with the join code (TCP 7390)
+scripts/net_common.sh     shared by host.sh / join.sh: Cyclone config, GPU choice
+scripts/windows_setup.ps1 one-time WSL networking + firewall setup on Windows
+scripts/make_bundle.sh    fallback: pack one player's files to copy by hand
 scripts/play_local.sh     server + several clients in one command
 third_party/stb_easy_font.h  text rendering (public domain, Sean Barrett)
 ```
@@ -328,7 +344,7 @@ player slot, while players who joined with the code play normally.
 
 To show encryption, capture UDP ports 7400-7600 in Wireshark once with `INSECURE=1 ./scripts/host.sh` and once with `./scripts/host.sh` (or with and without `--secure`). Without security the RTPS packets contain the player names in plain text, with it the payload is unreadable.
 
-To show signing, change one character in `security/out/permissions.p7s` and start the server: it stops with `PKCS7_signatureVerify: digest failure`.
+To show signing, change one character in `security/out/permissions.p7s` and start the server: it stops with `PKCS7_signatureVerify:digest failure`.
 
 ## Testing
 
@@ -337,6 +353,11 @@ To show signing, change one character in `security/out/permissions.p7s` and star
 | Game rules | `ctest --test-dir build` (13 tests, 99 checks: map, movement, bombs, explosions, chain reactions, power-ups, rounds, timeouts, snapshots) | all pass (checked on Cyclone DDS 0.10.5) |
 | Interpolation | `ctest` (17 checks): buffer, reordering, server restart, respawn, and a jitter simulation | no freezes or jumps up to 45 ms jitter |
 | Scripts without security | `INSECURE=1 ./scripts/host.sh` + `INSECURE=1 ./scripts/join.sh HOST_ADDRESS Tester` (one machine, Cyclone DDS 0.8.2) | `Player 1 joined (Tester)`, `Player 1 left` on close, no security files made, clean shutdown |
+| Secure join with a code | `./scripts/host.sh` + `./scripts/join.sh HOST_ADDRESS CODE Tester` (one machine, Cyclone DDS 0.8.2, OpenSSL 3.0.2) | certificate `client2` issued, `Player 1 joined (Tester)` over DDS Security, clean shutdown |
+| Join code checks | `join_code.py`: wrong code, code in lower case without the dash, two players, a fake host, player clock 2 h behind | wrong code refused, right code accepted, `client2` then `client3`, fake host rejected, certificates still valid |
+| Certificates | `openssl verify -x509_strict` on every certificate from `gen_security.sh` and the join code | all v3 and valid; governance and permissions signatures verify |
+| Intruder | secure `host.sh` + `INSECURE=1 ./scripts/join.sh HOST_ADDRESS Intruder` | the intruder never joins |
+| Tampered permissions | one character changed in `permissions.p7s` | server stops with `PKCS7_signatureVerify:digest failure` |
 | Still to do | security demo, sanitizer build, and a real play session with several players | TODO: write down what we saw |
 
 ## Troubleshooting
@@ -352,7 +373,10 @@ To show signing, change one character in `security/out/permissions.p7s` and star
 | `join.sh` says `Cannot get the files from ...:7390` | `host.sh` must be running on the host. On a Windows host, run `scripts\windows_setup.ps1` again (it opens TCP 7390). |
 | `Host said: wrong join code` | Check the code. After 20 wrong tries the host stops handing out certificates, restart `host.sh` for a new code. |
 | Joined before, but the host made new security files | Run `join.sh` with the new join code once more. |
-| `Host said: the game is full` | All 4 player certificates of this host session are used. Restart `host.sh` for a new code. |
+| `Host said: the game is full` | All 4 player certificates of this host session are used (failed attempts count too). Restart `host.sh` for a new code. |
+| `certificate is not yet valid` or `This machine's clock is wrong` | The player's clock is behind. In WSL run `sudo hwclock -s`, or in Windows Settings -> Time & language -> Date & time click **Sync now**, then `wsl --shutdown`. |
+| `Cannot use TCP port 7390` | Another `host.sh` is still running, maybe paused with Ctrl+Z. Stop it (`pkill -f join_code.py; pkill -f ba_server`) and start again. |
+| `syntax error near unexpected token 'http://join.sh/'` | A chat app turned `join.sh` into a link when the command was copied. Type the command by hand. |
 | Stuck on "Connecting..." | See "If it does not work or feels laggy" under Run. |
 | Game feels laggy or delayed | Join with `BA_NETSTATS=1` to see lost snapshots. Weak Wi-Fi or CPU drawing (`llvmpipe`) are the usual causes. |
 

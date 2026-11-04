@@ -91,8 +91,8 @@ def recv(sock):
     return json.loads(data.decode())
 
 
-def openssl(*args, data=None):
-    r = subprocess.run(["openssl", *args], input=data, capture_output=True)
+def openssl(*args, data=None, env=None):
+    r = subprocess.run(["openssl", *args], input=data, capture_output=True, env=env)
     if r.returncode != 0:
         raise RuntimeError(r.stderr.decode(errors="replace").strip())
     return r.stdout
@@ -112,23 +112,9 @@ def write(path, content, private=False):
 
 # ---------------------------------------------------------------- host side
 
-CA_CONFIG = """\
-[ca]
-default_ca = blast
-[blast]
-database        = {tmp}/index.txt
-new_certs_dir   = {tmp}
-serial          = {tmp}/serial
-default_md      = sha256
-policy          = any_name
-unique_subject  = no
-copy_extensions = none
-email_in_dn     = no
-[any_name]
-countryName      = optional
-organizationName = optional
-commonName       = optional
-"""
+# Same signing profile as security/gen_security.sh (v3_leaf).
+CA_CNF = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "security", "ca.cnf")
+CERT_DAYS = 365   # must match DAYS in security/gen_security.sh
 
 
 def sign_csr(d, csr, slot):
@@ -139,20 +125,20 @@ def sign_csr(d, csr, slot):
     little behind the host's (WSL clocks drift after sleep), and a certificate
     that starts "now" would be "not yet valid" there."""
     now = time.time()
-    fmt = "%y%m%d%H%M%SZ"
+    fmt = "%Y%m%d%H%M%SZ"
     start = time.strftime(fmt, time.gmtime(now - 86400))
-    end = time.strftime(fmt, time.gmtime(now + 365 * 86400))
+    end = time.strftime(fmt, time.gmtime(now + CERT_DAYS * 86400))
     with tempfile.TemporaryDirectory() as tmp:
         write(os.path.join(tmp, "index.txt"), "")
         write(os.path.join(tmp, "serial"), secrets.token_hex(16) + "\n")
-        write(os.path.join(tmp, "ca.cnf"), CA_CONFIG.format(tmp=tmp))
         write(os.path.join(tmp, "req.csr"), csr)
-        openssl("ca", "-batch", "-notext", "-config", os.path.join(tmp, "ca.cnf"),
+        openssl("ca", "-batch", "-notext", "-config", CA_CNF, "-extensions", "v3_leaf",
                 "-cert", os.path.join(d, "ca_cert.pem"),
                 "-keyfile", os.path.join(d, "ca_key.pem"),
                 "-in", os.path.join(tmp, "req.csr"),
                 "-out", os.path.join(tmp, "cert.pem"),
-                "-subj", SUBJECT.format(slot), "-startdate", start, "-enddate", end)
+                "-subj", SUBJECT.format(slot), "-startdate", start, "-enddate", end,
+                env=dict(os.environ, CADIR=tmp))
         return read(os.path.join(tmp, "cert.pem"))
 
 
