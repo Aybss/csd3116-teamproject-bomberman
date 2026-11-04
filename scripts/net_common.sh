@@ -32,7 +32,18 @@ use_gpu() {
     fi
     if GALLIUM_DRIVER=d3d12 glxinfo -B 2> /dev/null | grep -qi "renderer string: d3d12"; then
         export GALLIUM_DRIVER=d3d12
-        echo "Drawing with the GPU (D3D12)."
+        # Laptops often have a weak Intel GPU and a strong NVIDIA or AMD one.
+        # WSL picks the Intel one by default, so ask for the strong one.
+        local gpu
+        if [ -z "${MESA_D3D12_DEFAULT_ADAPTER_NAME:-}" ]; then
+            for gpu in NVIDIA AMD; do
+                if MESA_D3D12_DEFAULT_ADAPTER_NAME=$gpu glxinfo -B 2> /dev/null | grep -qi "renderer string: d3d12 ($gpu"; then
+                    export MESA_D3D12_DEFAULT_ADAPTER_NAME=$gpu
+                    break
+                fi
+            done
+        fi
+        echo "Drawing with the GPU: $(glxinfo -B 2> /dev/null | sed -n 's/.*renderer string: //p')"
     elif glxinfo -B 2> /dev/null | grep -qi llvmpipe; then
         echo "Note: the window is drawn by the CPU (llvmpipe), which can feel slow."
         echo "Update the Windows GPU driver and run 'wsl --update' to use the GPU."

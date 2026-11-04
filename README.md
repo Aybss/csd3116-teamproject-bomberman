@@ -96,7 +96,8 @@ so next time against the same host `./scripts/join.sh HOST_ADDRESS YourName` is 
 every time `host.sh` starts. (Details in `scripts/join_code.py`.)
 
 The scripts also help against lag: `host.sh` runs the server at a higher priority, so a game window on
-the host cannot slow it down, and `join.sh` draws with the GPU in WSL when it can (it says so when it starts).
+the host cannot slow it down, and `join.sh` draws with the GPU in WSL when it can, and picks an NVIDIA or AMD GPU over a
+built-in Intel one (it prints which GPU it uses when it starts).
 
 **If it does not work or feels laggy**
 
