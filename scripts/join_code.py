@@ -36,6 +36,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 
 PORT = 7390
 KDF_SALT = b"BlastArena join code v1"
@@ -111,6 +112,50 @@ def write(path, content, private=False):
 
 # ---------------------------------------------------------------- host side
 
+CA_CONFIG = """\
+[ca]
+default_ca = blast
+[blast]
+database        = {tmp}/index.txt
+new_certs_dir   = {tmp}
+serial          = {tmp}/serial
+default_md      = sha256
+policy          = any_name
+unique_subject  = no
+copy_extensions = none
+email_in_dn     = no
+[any_name]
+countryName      = optional
+organizationName = optional
+commonName       = optional
+"""
+
+
+def sign_csr(d, csr, slot):
+    """Sign a player's request as `slot`. openssl ca checks the request's own
+    signature and replaces the name the player asked for with ours.
+
+    The certificate is valid from one day ago: the player's clock is often a
+    little behind the host's (WSL clocks drift after sleep), and a certificate
+    that starts "now" would be "not yet valid" there."""
+    now = time.time()
+    fmt = "%y%m%d%H%M%SZ"
+    start = time.strftime(fmt, time.gmtime(now - 86400))
+    end = time.strftime(fmt, time.gmtime(now + 365 * 86400))
+    with tempfile.TemporaryDirectory() as tmp:
+        write(os.path.join(tmp, "index.txt"), "")
+        write(os.path.join(tmp, "serial"), secrets.token_hex(16) + "\n")
+        write(os.path.join(tmp, "ca.cnf"), CA_CONFIG.format(tmp=tmp))
+        write(os.path.join(tmp, "req.csr"), csr)
+        openssl("ca", "-batch", "-notext", "-config", os.path.join(tmp, "ca.cnf"),
+                "-cert", os.path.join(d, "ca_cert.pem"),
+                "-keyfile", os.path.join(d, "ca_key.pem"),
+                "-in", os.path.join(tmp, "req.csr"),
+                "-out", os.path.join(tmp, "cert.pem"),
+                "-subj", SUBJECT.format(slot), "-startdate", start, "-enddate", end)
+        return read(os.path.join(tmp, "cert.pem"))
+
+
 def serve(args):
     d = args.dir
     for f in ("ca_cert.pem", "ca_key.pem", "governance.p7s", "permissions.p7s"):
@@ -147,18 +192,7 @@ def serve(args):
                     send(conn, {"error": "wrong join code"})
                     continue
                 slot = slots[given % len(slots)]
-                with tempfile.TemporaryDirectory() as tmp:
-                    csr_path = os.path.join(tmp, "req.csr")
-                    cert_path = os.path.join(tmp, "cert.pem")
-                    write(csr_path, csr)
-                    # Verifies the request's own signature, then signs it with
-                    # the name we choose (not the name the player asked for).
-                    openssl("x509", "-req", "-in", csr_path,
-                            "-CA", os.path.join(d, "ca_cert.pem"),
-                            "-CAkey", os.path.join(d, "ca_key.pem"),
-                            "-CAcreateserial", "-sha256", "-days", "365",
-                            "-subj", SUBJECT.format(slot), "-out", cert_path)
-                    cert = read(cert_path)
+                cert = sign_csr(d, csr, slot)
                 send(conn, {"slot": slot, "ca": ca, "cert": cert,
                             "governance": gov, "permissions": perm,
                             "mac": mac(key, "resp", nonce, slot, ca, cert, gov, perm)})
@@ -217,8 +251,15 @@ def fetch(args):
     write(os.path.join(d, "permissions.p7s"), base64.b64decode(perm))
     write(os.path.join(d, "identity.txt"), slot + "\n")
 
-    openssl("verify", "-CAfile", os.path.join(d, "ca_cert.pem"),
-            os.path.join(d, f"{slot}_cert.pem"))
+    try:
+        openssl("verify", "-CAfile", os.path.join(d, "ca_cert.pem"),
+                os.path.join(d, f"{slot}_cert.pem"))
+    except RuntimeError as e:
+        hint = ""
+        if "not yet valid" in str(e) or "expired" in str(e):
+            hint = ("\n  This machine's clock is wrong. Compare `date -u` with the host."
+                    "\n  In WSL fix it with `sudo hwclock -s` (or `wsl --shutdown` in PowerShell).")
+        sys.exit(f"[join-code] The certificate does not check out: {e}{hint}")
     log(f"Got certificate {slot} from {args.host}")
 
 

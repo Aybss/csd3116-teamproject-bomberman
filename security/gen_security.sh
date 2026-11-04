@@ -32,17 +32,57 @@ T_INPUT="BA_Input"
 T_STATE="BA_GameState"
 T_MAP="BA_MapState"
 
+# Certificates are valid from yesterday: a player whose clock is a little
+# behind the host's (WSL clocks drift after sleep) would otherwise reject a
+# certificate made "now" as not yet valid. `openssl ca` can set the start
+# date (`req -x509` and `x509 -req` cannot in OpenSSL 3.0).
+START="$(date -u -d "-1 day" +%y%m%d%H%M%SZ 2>/dev/null || date -u -v-1d +%y%m%d%H%M%SZ)"
+END="$(date -u -d "+$DAYS days" +%y%m%d%H%M%SZ 2>/dev/null || date -u -v+${DAYS}d +%y%m%d%H%M%SZ)"
+CADIR="$(mktemp -d)"
+trap 'rm -rf "$CADIR"' EXIT
+: > "$CADIR/index.txt"
+openssl rand -hex 16 > "$CADIR/serial"
+cat > "$CADIR/ca.cnf" <<EOF
+[ca]
+default_ca = blast
+[blast]
+database        = $CADIR/index.txt
+new_certs_dir   = $CADIR
+serial          = $CADIR/serial
+default_md      = sha256
+policy          = any_name
+unique_subject  = no
+copy_extensions = none
+email_in_dn     = no
+[any_name]
+countryName      = optional
+organizationName = optional
+commonName       = optional
+[v3_ca]
+basicConstraints     = critical, CA:TRUE
+subjectKeyIdentifier = hash
+EOF
+sign() {   # sign CSR_FILE OUT_FILE [extra openssl ca options]
+    local csr="$1" out="$2" log
+    shift 2
+    if ! log="$(openssl ca -batch -notext -config "$CADIR/ca.cnf" -in "$csr" -out "$out" \
+                -startdate "$START" -enddate "$END" "$@" 2>&1)"; then
+        echo "$log"
+        return 1
+    fi
+}
+
 echo "== 1. Certificate Authority"
 # EC P-256 keys: supported by Cyclone and faster to handshake than RSA-2048.
 openssl ecparam -name prime256v1 -genkey -noout -out ca_key.pem
-openssl req -x509 -new -key ca_key.pem -sha256 -days "$DAYS" \
-        -subj "/C=SG/O=BlastArena/CN=BlastArena CA" -out ca_cert.pem
+openssl req -new -key ca_key.pem -subj "/C=SG/O=BlastArena/CN=BlastArena CA" -out ca.csr
+sign ca.csr ca_cert.pem -selfsign -keyfile ca_key.pem -extensions v3_ca
+rm -f ca.csr
 
 make_identity() {   # $1 = name (server, client1, ...)
     openssl ecparam -name prime256v1 -genkey -noout -out "$1_key.pem"
     openssl req -new -key "$1_key.pem" -subj "/C=SG/O=BlastArena/CN=$1" -out "$1.csr"
-    openssl x509 -req -in "$1.csr" -CA ca_cert.pem -CAkey ca_key.pem \
-            -CAcreateserial -sha256 -days "$DAYS" -out "$1_cert.pem" 2>/dev/null
+    sign "$1.csr" "$1_cert.pem" -cert ca_cert.pem -keyfile ca_key.pem
     rm -f "$1.csr"
 }
 
@@ -83,7 +123,9 @@ cat > governance.xml <<EOF
 EOF
 
 echo "== 4. Permissions (who may publish / subscribe what)"
-NOT_BEFORE="$(date -u +%Y-%m-%dT%H:%M:%S)"
+# Valid from yesterday, so a machine whose clock is a little behind does not
+# see the permissions as "not yet valid".
+NOT_BEFORE="$(date -u -d "-1 day" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -v-1d +%Y-%m-%dT%H:%M:%S)"
 NOT_AFTER="$(date -u -d "+$DAYS days" +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -v+${DAYS}d +%Y-%m-%dT%H:%M:%S)"
 
 grant() {   # $1 = identity name, $2 = publish topics, $3 = subscribe topics
