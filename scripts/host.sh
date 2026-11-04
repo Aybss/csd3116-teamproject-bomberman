@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # host.sh - start the game server so other machines can join.
 #
-#   ./scripts/host.sh                      secure server
+#   ./scripts/host.sh                      secure server, prints a join code
 #   ./scripts/host.sh 10.0.0.5 10.0.0.6    also contact these player addresses
 #   INSECURE=1 ./scripts/host.sh           no security (for quick tests only)
 #   DDS_TRACE=1 ./scripts/host.sh          write a debug log to /tmp/dds.log
 #
-# The first time it makes the security files for you.
+# The first time it makes the security files for you. Players get their own
+# certificate automatically with the join code (see scripts/join_code.py),
+# so nothing has to be copied between machines.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -14,26 +16,42 @@ cd "$ROOT"
 
 [ -x build/ba_server ] || { echo "Build first: cmake -B build && cmake --build build"; exit 1; }
 
-echo "Addresses of this machine (give one of them to the players):"
-show_ips | sed 's/^/  /'
+ips="$(show_ips)"
+first_ip="$(echo "$ips" | head -n1)"
+echo "Addresses of this machine:"
+echo "$ips" | sed 's/^/  /'
 echo
 
 if [ "${INSECURE:-}" = "1" ]; then
     echo "INSECURE mode: no authentication, no encryption."
-    echo "Players join with:  INSECURE=1 ./scripts/join.sh SERVER_ADDRESS"
+    echo "Players join with:  INSECURE=1 ./scripts/join.sh ${first_ip:-HOST_ADDRESS}"
     write_config none "$SEC/local_none.xml" "$@"
     exec ./build/ba_server --secure "$SEC/local_none.xml"
 fi
 
-if [ ! -f "$SEC/server_cert.pem" ]; then
+if [ ! -f "$SEC/server_cert.pem" ] || [ ! -f "$SEC/ca_key.pem" ]; then
     echo "No security files yet, making them..."
     bash ./security/gen_security.sh 5
     echo
 fi
 need_files server
 write_config server "$SEC/local_server.xml" "$@"
-echo "Players on other machines need their own bundle. Make one with:"
-echo "  ./scripts/make_bundle.sh 1      (then 2, 3, ...)"
-echo "They join with:  ./scripts/join.sh SERVER_ADDRESS client1 TheirName"
+
+# Hand out player certificates while the server runs.
+CODE="$(python3 scripts/join_code.py new-code)"
+python3 scripts/join_code.py serve --dir "$SEC" --code "$CODE" &
+helper=$!
+trap 'kill "$helper" 2>/dev/null || true' EXIT
+
+echo "=============================================================="
+echo "  Join code:  $CODE"
 echo
-exec ./build/ba_server --secure "$SEC/local_server.xml"
+echo "  Players on other machines run:"
+echo "    ./scripts/join.sh ${first_ip:-HOST_ADDRESS} $CODE TheirName"
+echo
+echo "  To play on this machine too, in another terminal:"
+echo "    ./scripts/join.sh local client1 YourName"
+echo "=============================================================="
+echo
+
+./build/ba_server --secure "$SEC/local_server.xml"

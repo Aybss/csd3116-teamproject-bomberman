@@ -72,22 +72,33 @@ Or open several players on one machine: `./scripts/play_local.sh 3`
 
 Each client uses its own identity (`client1` … `client5`). `security/out/` holds private keys and is in `.gitignore`, never commit it.
 
-### Play on two machines
+### Play on several machines (2 to 5 players)
 
-Needs a build on both machines and the same Wi-Fi or network.
+Needs a build on every machine and the same Wi-Fi or network. Nothing has to be copied between machines.
 
 1. Windows with WSL only, one time on each machine: open PowerShell as Administrator and run
    `powershell -ExecutionPolicy Bypass -File scripts\windows_setup.ps1`, then `wsl --shutdown`.
-2. Host machine: `./scripts/host.sh`. It shows its address and makes the security files the first time.
-3. Host: `./scripts/make_bundle.sh 1` makes a small file for one player. Copy it to the other machine.
-4. Other machine, inside the repo folder:
-   `mkdir -p security/out && tar xzf bundle_client1.tar.gz -C security/out`
-5. Other machine: `./scripts/join.sh HOST_ADDRESS client1 YourName`
+2. Host machine:
+   ```bash
+   ./scripts/host.sh
+   #   Join code:  K7QX-M2PA
+   #   Players on other machines run:
+   #     ./scripts/join.sh 10.46.210.55 K7QX-M2PA TheirName
+   ```
+3. Every other machine runs the command it printed. The host can play too, in a second terminal:
+   `./scripts/join.sh local client1 YourName`
 
-Use a different number (client1 to client5) on every machine. If the host plays too, it can run
-`./scripts/join.sh local client2 HostName`. For a quick test without security, put `INSECURE=1` in front of
-the host and join commands. If it stays on Connecting, add `DDS_TRACE=1` and look at `/tmp/dds.log`.
-If a script says "bad interpreter", run it with `bash scripts/host.sh` instead.
+The join code works like a Wi-Fi password. The player's machine makes its own private key, sends only a
+signing request with an HMAC made from the code, and gets back a certificate (`client2` … `client5`), the
+CA and the signed governance and permissions files, also checked with the code. A stranger without the
+code gets nothing, and a fake host cannot hand out its own CA. The files are saved in `security/out/join/`,
+so next time against the same host `./scripts/join.sh HOST_ADDRESS YourName` is enough. A new code is made
+every time `host.sh` starts. (Details in `scripts/join_code.py`.)
+
+For a quick test without security, put `INSECURE=1` in front of the host and join commands. If it stays on
+Connecting, add `DDS_TRACE=1` and look at `/tmp/dds.log`. If a script says "bad interpreter", run it with
+`bash scripts/host.sh` instead. Without the scripts, `./scripts/make_bundle.sh N` still packs one player's
+files by hand.
 
 ### Controls
 
@@ -295,11 +306,15 @@ To show signing, change one character in `security/out/permissions.p7s` and star
 | `glfwInit failed` | WSL needs WSLg (Windows 11, `wsl --update`) or an X server for windows to appear. |
 | `gen_security.sh` warns `libdds_security_auth.so not found` | Find it with `find / -name 'libdds_security_auth*' 2>/dev/null`. If it does not exist, your Cyclone DDS has no security support: build Cyclone DDS from source with `-DENABLE_SECURITY=ON`. |
 | `dds_create_participant` fails with `--secure` | Run `./security/gen_security.sh` again, the paths inside the generated XML must exist on this machine. |
+| `join.sh` says `Cannot get the files from ...:7390` | `host.sh` must be running on the host. On a Windows host, run `scripts\windows_setup.ps1` again (it opens TCP 7390). |
+| `Host said: wrong join code` | Check the code. After 20 wrong tries the host stops handing out certificates, restart `host.sh` for a new code. |
+| Joined before, but the host made new security files | Run `join.sh` with the new join code once more. |
 
 ## Known limitations
 
 - No client-side prediction, and the world is drawn 80 ms in the past for smoothness, so your own player reacts about 100 ms after a key press. Fine for a LAN, lower `BA_INTERP_DELAY_MS` in `interp.h` on a very steady network.
-- All clients share one CA, in a real deployment each machine would only receive its own private key.
+- All clients share one CA. With join codes each machine makes and keeps its own private key, but the CA key stays on the host, so the host can sign anything.
+- The join code is 8 characters (about 40 bits) stretched with PBKDF2. Someone who records the exchange could try to guess it offline, which is fine for a LAN game but is why a real system would use a PAKE or TLS.
 - With security off, everyone on the same LAN and DDS domain 0 can see each other's games.
 
 ## Team

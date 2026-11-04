@@ -5,7 +5,8 @@
 #
 # It does this:
 #   1. Turns on WSL mirrored networking (WSL gets the same address as Windows)
-#   2. Allows ping and the game ports (UDP 7400-7600) in the Windows firewall
+#   2. Allows ping, the game ports (UDP 7400-7600) and the join code port
+#      (TCP 7390) in the Windows firewall
 #   3. Opens the same ports for WSL itself (Hyper-V firewall)
 #   4. Shows if your network is set to Public
 # Then run:  wsl --shutdown   and open WSL again.
@@ -41,6 +42,7 @@ function Add-GameRule([string]$Name, [hashtable]$Params) {
 Add-GameRule "Blast Arena ping"    @{ Direction = "Inbound";  Protocol = "ICMPv4"; IcmpType = 8 }
 Add-GameRule "Blast Arena UDP in"  @{ Direction = "Inbound";  Protocol = "UDP"; LocalPort = "7400-7600" }
 Add-GameRule "Blast Arena UDP out" @{ Direction = "Outbound"; Protocol = "UDP"; LocalPort = "7400-7600" }
+Add-GameRule "Blast Arena join code" @{ Direction = "Inbound"; Protocol = "TCP"; LocalPort = "7390" }
 
 # 3. WSL firewall (Hyper-V). Older Windows may not have this.
 $vm = '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}'
@@ -48,6 +50,9 @@ try {
     Set-NetFirewallHyperVVMSetting -Name $vm -DefaultInboundAction Allow -ErrorAction Stop
     if (-not (Get-NetFirewallHyperVRule -Name "BlastArenaUdpIn" -ErrorAction SilentlyContinue)) {
         New-NetFirewallHyperVRule -Name "BlastArenaUdpIn" -DisplayName "Blast Arena UDP in" -Direction Inbound -VMCreatorId $vm -Protocol UDP -LocalPorts 7400-7600 -ErrorAction Stop | Out-Null
+    }
+    if (-not (Get-NetFirewallHyperVRule -Name "BlastArenaJoinCode" -ErrorAction SilentlyContinue)) {
+        New-NetFirewallHyperVRule -Name "BlastArenaJoinCode" -DisplayName "Blast Arena join code" -Direction Inbound -VMCreatorId $vm -Protocol TCP -LocalPorts 7390 -ErrorAction Stop | Out-Null
     }
     Write-Host "WSL firewall is set."
 } catch {

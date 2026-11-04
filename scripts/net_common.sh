@@ -3,6 +3,10 @@
 # Do not run this file by itself.
 
 SEC="$ROOT/security/out"
+# Where the identity files are read from. host.sh and "join.sh local" use SEC.
+# A player who joined with a join code uses SEC/join, so those files never
+# overwrite this machine's own host files.
+KEYDIR="${KEYDIR:-$SEC}"
 
 # Print this machine's network addresses (not the loopback ones)
 show_ips() {
@@ -12,8 +16,10 @@ show_ips() {
 # Find a Cyclone security plugin. Example: find_plugin auth
 find_plugin() {
     local p
-    p="$(find /usr/lib /usr/local/lib /opt/homebrew/lib "${CDDS_LIB_DIR:-/usr/lib}" \
-         \( -name "libdds_security_$1.so" -o -name "libdds_security_$1.dylib" \) \
+    # -maxdepth 3 reaches /usr/lib/x86_64-linux-gnu/libddsc0/ (Ubuntu) without
+    # scanning all of /usr/lib, which takes seconds on WSL.
+    p="$(find ${CDDS_LIB_DIR:+"$CDDS_LIB_DIR"} /usr/lib /usr/local/lib /opt/homebrew/lib \
+         -maxdepth 3 \( -name "libdds_security_$1.so" -o -name "libdds_security_$1.dylib" \) \
          2>/dev/null | head -n1 || true)"
     echo "${p:-dds_security_$1}"
 }
@@ -22,12 +28,11 @@ find_plugin() {
 need_files() {   # $1 = identity (server, client1, ...)
     local f missing=0
     for f in ca_cert.pem governance.p7s permissions.p7s "$1_cert.pem" "$1_key.pem"; do
-        if [ ! -f "$SEC/$f" ]; then echo "Missing: security/out/$f"; missing=1; fi
+        if [ ! -f "$KEYDIR/$f" ]; then echo "Missing: ${KEYDIR#"$ROOT"/}/$f"; missing=1; fi
     done
     if [ "$missing" = 1 ]; then
-        echo "The host makes the files with ./security/gen_security.sh and packs them"
-        echo "for one player with ./scripts/make_bundle.sh NUMBER. Unpack that bundle with:"
-        echo "  mkdir -p security/out && tar xzf bundle_clientN.tar.gz -C security/out"
+        echo "Join with the code the host shows:  ./scripts/join.sh HOST_ADDRESS JOIN-CODE YourName"
+        echo "(Or unpack a bundle from ./scripts/make_bundle.sh into security/out.)"
         exit 1
     fi
 }
@@ -64,15 +69,15 @@ write_config() {
     <Security>
       <Authentication>
         <Library path="$auth" initFunction="init_authentication" finalizeFunction="finalize_authentication"/>
-        <IdentityCA>file:$SEC/ca_cert.pem</IdentityCA>
-        <IdentityCertificate>file:$SEC/${id}_cert.pem</IdentityCertificate>
-        <PrivateKey>file:$SEC/${id}_key.pem</PrivateKey>
+        <IdentityCA>file:$KEYDIR/ca_cert.pem</IdentityCA>
+        <IdentityCertificate>file:$KEYDIR/${id}_cert.pem</IdentityCertificate>
+        <PrivateKey>file:$KEYDIR/${id}_key.pem</PrivateKey>
       </Authentication>
       <AccessControl>
         <Library path="$ac" initFunction="init_access_control" finalizeFunction="finalize_access_control"/>
-        <PermissionsCA>file:$SEC/ca_cert.pem</PermissionsCA>
-        <Governance>file:$SEC/governance.p7s</Governance>
-        <Permissions>file:$SEC/permissions.p7s</Permissions>
+        <PermissionsCA>file:$KEYDIR/ca_cert.pem</PermissionsCA>
+        <Governance>file:$KEYDIR/governance.p7s</Governance>
+        <Permissions>file:$KEYDIR/permissions.p7s</Permissions>
       </AccessControl>
       <Cryptographic>
         <Library path="$crypto" initFunction="init_crypto" finalizeFunction="finalize_crypto"/>
