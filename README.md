@@ -72,6 +72,23 @@ Or open several players on one machine: `./scripts/play_local.sh 3`
 
 Each client uses its own identity (`client1` … `client5`). `security/out/` holds private keys and is in `.gitignore`, never commit it.
 
+### Play on two machines
+
+Needs a build on both machines and the same Wi-Fi or network.
+
+1. Windows with WSL only, one time on each machine: open PowerShell as Administrator and run
+   `powershell -ExecutionPolicy Bypass -File scripts\windows_setup.ps1`, then `wsl --shutdown`.
+2. Host machine: `./scripts/host.sh`. It shows its address and makes the security files the first time.
+3. Host: `./scripts/make_bundle.sh 1` makes a small file for one player. Copy it to the other machine.
+4. Other machine, inside the repo folder:
+   `mkdir -p security/out && tar xzf bundle_client1.tar.gz -C security/out`
+5. Other machine: `./scripts/join.sh HOST_ADDRESS client1 YourName`
+
+Use a different number (client1 to client5) on every machine. If the host plays too, it can run
+`./scripts/join.sh local client2 HostName`. For a quick test without security, put `INSECURE=1` in front of
+the host and join commands. If it stays on Connecting, add `DDS_TRACE=1` and look at `/tmp/dds.log`.
+If a script says "bad interpreter", run it with `bash scripts/host.sh` instead.
+
 ### Controls
 
 | Key | Action |
