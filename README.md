@@ -11,7 +11,7 @@ Drop bombs to blast through crates, collect power-ups, and trap the other player
 
 ## Features
 
-- 2–5 players on a 19×13 tile map, one authoritative server
+- 2-5 players on a 19x13 tile map, one authoritative server
 - Randomly generated maps: indestructible pillars, destructible crates, hidden power-ups (extra bomb, bigger blast, speed)
 - Chain reactions, round timer, scores, lobby -> countdown -> playing -> winner
 - Smooth movement: 60 Hz server simulation, 30 Hz snapshots, jitter-buffered interpolation on the server's timeline (no rubberbanding)
@@ -70,24 +70,55 @@ Or open several players on one machine: `./scripts/play_local.sh 3`
 ./build/ba_client --secure security/out/client2.xml --name Bob
 ```
 
-Each client uses its own identity (`client1` … `client5`). `security/out/` holds private keys and is in `.gitignore`, never commit it.
+Each client uses its own identity (`client1` ... `client5`). `security/out/` holds private keys and is in `.gitignore`, never commit it.
 
 ### Play on two machines
 
-Needs a build on both machines and the same Wi-Fi or network.
+Both machines need the project built (see Build) and must be on the same Wi-Fi.
+One machine is the host (it runs the server), the other one is the player.
 
-1. Windows with WSL only, one time on each machine: open PowerShell as Administrator and run
-   `powershell -ExecutionPolicy Bypass -File scripts\windows_setup.ps1`, then `wsl --shutdown`.
-2. Host machine: `./scripts/host.sh`. It shows its address and makes the security files the first time.
-3. Host: `./scripts/make_bundle.sh 1` makes a small file for one player. Copy it to the other machine.
-4. Other machine, inside the repo folder:
-   `mkdir -p security/out && tar xzf bundle_client1.tar.gz -C security/out`
-5. Other machine: `./scripts/join.sh HOST_ADDRESS client1 YourName`
+**Once on each Windows machine** (skip this on Linux or macOS)
 
-Use a different number (client1 to client5) on every machine. If the host plays too, it can run
-`./scripts/join.sh local client2 HostName`. For a quick test without security, put `INSECURE=1` in front of
-the host and join commands. If it stays on Connecting, add `DDS_TRACE=1` and look at `/tmp/dds.log`.
-If a script says "bad interpreter", run it with `bash scripts/host.sh` instead.
+Open PowerShell as Administrator in the repo folder and run:
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\windows_setup.ps1
+wsl --shutdown
+```
+
+This lets the two machines see each other (WSL mirrored networking and firewall rules).
+
+**On the host**
+
+```bash
+bash scripts/host.sh                 # starts the server and shows this machine's address
+bash scripts/make_bundle.sh 1        # in a second window: makes the file for player 1
+```
+
+Send `security/out/bundle_client1.tar.gz` to the player (USB stick, chat, email).
+To play on the host too, open another window: `bash scripts/join.sh local client2 HostName`
+
+**On the player's machine**, in the repo folder
+
+```bash
+mkdir -p security/out && tar xzf bundle_client1.tar.gz -C security/out
+bash scripts/join.sh HOST_ADDRESS client1 YourName
+```
+
+HOST_ADDRESS is the address that host.sh printed (for example 10.46.210.55), not your own address.
+Every machine uses a different number, client1 to client5. For more players run `make_bundle.sh 2`, `3` and so on.
+
+**If it does not work**
+
+- Try without security first: `INSECURE=1 bash scripts/host.sh` on the host and
+  `INSECURE=1 bash scripts/join.sh HOST_ADDRESS` on the player. If that also fails, the problem is
+  the network or the firewall, not the certificates.
+- From the player, `ping HOST_ADDRESS`. No reply means the host blocks it: run windows_setup.ps1 on the host again.
+- If it feels laggy, put `BA_NETSTATS=1` in front of the join command. Every second the client prints
+  how many snapshots arrived, how many were lost and the longest gap. About 30 per second with 0 lost is good.
+  Many lost means weak Wi-Fi: move closer to the router or hotspot, or use 5 GHz.
+- For a debug log, put `DDS_TRACE=1` in front of host.sh or join.sh and read `/tmp/dds.log`.
+- If a script says "bad interpreter", run it with `bash scripts/...` as shown above.
 
 ### Controls
 
@@ -115,9 +146,9 @@ Click inside the window first so it has keyboard focus.
 3. A bomb explodes after **2.5 s** in a cross of flames. Flames stop at walls, destroy the first crate they hit, and set off any bomb they reach (chain reaction).
 4. A player standing in a flame is out.
 5. About a third of crates hide a power-up, revealed when the crate is destroyed:
-   - **B** – one more bomb at a time (max 5)
-   - **F** – one more tile of blast range (max 8)
-   - **S** – walk faster (max 4)
+   - **B** - one more bomb at a time (max 5)
+   - **F** - one more tile of blast range (max 8)
+   - **S** - walk faster (max 4)
    Flames destroy uncollected power-ups.
 6. The last player standing wins the round and scores a point. If nobody survives, or the 2:30 timer runs out, it is a draw.
 7. Players who join mid-round watch as ghosts until the next round.
@@ -193,7 +224,7 @@ sequenceDiagram
 
 ### Smooth movement without rubberbanding
 
-Snapshots leave the server every 33 ms, but network and scheduling jitter make them *arrive* unevenly (15–80 ms apart on WSL). Interpolating by arrival time made players freeze when a snapshot was late and then jump to catch up, which looked like rubberbanding.
+Snapshots leave the server every 33 ms, but network and scheduling jitter make them *arrive* unevenly (15-80 ms apart on WSL). Interpolating by arrival time made players freeze when a snapshot was late and then jump to catch up, which looked like rubberbanding.
 
 `src/client/interp.c` fixes this the way most real-time games do:
 
@@ -206,9 +237,9 @@ Measured by `tests/test_interp.c` (simulated walk, 60 fps, random delivery jitte
 
 | Jitter | Old: freezes | Old: biggest jump | New: freezes | New: biggest jump |
 |---|---|---|---|---|
-| 0–10 ms | 0 | 2.1× normal step | 0 | 1.0× |
-| 0–30 ms | 54 | 3.9× | 0 | 1.06× |
-| 0–45 ms | 96 | 5.1× | 0 | 1.12× |
+| 0-10 ms | 0 | 2.1x normal step | 0 | 1.0x |
+| 0-30 ms | 54 | 3.9x | 0 | 1.06x |
+| 0-45 ms | 96 | 5.1x | 0 | 1.12x |
 
 **Bomb presses** are sent as a counter (`bomb_seq`), not a "pressed" flag. With keep-last-1 a quick tap between two messages could be overwritten, a counter can't lose a press, and a repeated message never drops a second bomb.
 
@@ -225,7 +256,7 @@ Measured by `tests/test_interp.c` (simulated walk, 60 fps, random delivery jitte
 | Logging | `printf` for every message | debug logs only with `-v` |
 | Rendering | unlimited frame rate | vsync, circle sin/cos precomputed once |
 | Message types | n/a | fixed-size arrays and bounded strings: no heap allocation per sample |
-| Movement | speed depends on how fast messages arrive | frame-rate independent (tiles per second × dt) |
+| Movement | speed depends on how fast messages arrive | frame-rate independent (tiles per second x dt) |
 
 **Measured** (server only, no window, 2-core Linux VM, Cyclone DDS 0.10.5, release build, no security):
 
@@ -273,7 +304,7 @@ cmake -B build-asan -DBA_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug     # AddressSanit
 ./build/ba_client --name intruder
 ```
 
-To show encryption, capture UDP ports 7400–7500 in Wireshark with and without `--secure`. Without it the RTPS packets contain the player names in plain text, with it the payload is unreadable.
+To show encryption, capture UDP ports 7400-7500 in Wireshark with and without `--secure`. Without it the RTPS packets contain the player names in plain text, with it the payload is unreadable.
 
 To show signing, change one character in `security/out/permissions.p7s` and start the server: it stops with `PKCS7_signatureVerify: digest failure`.
 
@@ -295,6 +326,8 @@ To show signing, change one character in `security/out/permissions.p7s` and star
 | `glfwInit failed` | WSL needs WSLg (Windows 11, `wsl --update`) or an X server for windows to appear. |
 | `gen_security.sh` warns `libdds_security_auth.so not found` | Find it with `find / -name 'libdds_security_auth*' 2>/dev/null`. If it does not exist, your Cyclone DDS has no security support: build Cyclone DDS from source with `-DENABLE_SECURITY=ON`. |
 | `dds_create_participant` fails with `--secure` | Run `./security/gen_security.sh` again, the paths inside the generated XML must exist on this machine. |
+| Stuck on "Connecting..." on another machine | Follow "If it does not work" under Play on two machines. |
+| Game feels laggy or delayed | Run the client with `BA_NETSTATS=1` to see lost snapshots. Also check `glxinfo -B`: `llvmpipe` means the window is drawn by the CPU, which is slower. |
 
 ## Known limitations
 
@@ -321,7 +354,7 @@ Answer:
 - Blast Arena. Bomberman-style. The server decides everything. Optimization: fixed-rate loop, WaitSets, sending input only on change. Authentication: only certified clients join. Encryption: all topics are encrypted.
 - Hot Potato. One player holds a ticking potato and passes it on. It is small, so it is easy to build, but there is less to optimize.
 - Tank Arena. Top-down tanks shooting bullets. It has lots of moving objects, so it is a good test for batching state in one message and reducing network traffic.
-- Capture the Flag. Two teams on a map. It suits access control well, because each team only gets its own team’s data."
+- Capture the Flag. Two teams on a map. It suits access control well, because each team only gets its own team's data."
 
 Prompt:
 "How should I implement DDS security authentication, encryption, and access control in this project"
@@ -354,7 +387,7 @@ Corrections. Blend small differences over a few frames instead of snapping. You 
 Bots and turning. The server only reads keys at tile centres, except the opposite key turns at once. Keep clients from sending a new direction too early."
 
 Prompt:
-“Give me the commands for the sanitizer build and what to look for in the output.”
+"Give me the commands for the sanitizer build and what to look for in the output."
 
 Answer:
 "cmake -B build-asan -DBA_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
@@ -377,7 +410,7 @@ Leaks: the LeakSanitizer summary at exit. Leaks whose stack is only inside libdd
 Good result: no ERROR: lines and no runtime error: lines."
 
 Prompt:
-“Write a checklist of manual play tests for 2 to 5 players, including joining, leaving and crashing a client.”
+"Write a checklist of manual play tests for 2 to 5 players, including joining, leaving and crashing a client."
 
 Answer:
 "Start and join
