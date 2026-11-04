@@ -114,6 +114,30 @@ built-in Intel one (it prints which GPU it uses when it starts).
 - If a script says "bad interpreter", run it with `bash scripts/host.sh` instead.
 - Without the join code, `./scripts/make_bundle.sh N` still packs one player's files by hand.
 
+### Play on several machines without security
+
+For quick tests, or to compare with secure mode. No keys, no join code and nothing to copy, but anyone on
+the network can join and read the traffic. Do the one-time Windows setup above first.
+
+1. Host machine:
+   ```bash
+   INSECURE=1 ./scripts/host.sh
+   #   INSECURE mode: no authentication, no encryption.
+   #   Players join with:  INSECURE=1 ./scripts/join.sh 10.46.210.55
+   ```
+2. The host can play too, in a second terminal: `INSECURE=1 ./scripts/join.sh local YourName`
+3. Every other machine: `INSECURE=1 ./scripts/join.sh HOST_ADDRESS TheirName`
+
+The host shows `Player N joined (TheirName)`, and `Player N left` when a window is closed. **Every**
+program needs `INSECURE=1`: a secure game and an insecure one cannot see each other.
+
+| Check | Expected |
+|---|---|
+| Player joins | Host prints `Player N joined (Name)` |
+| Play a round | Same as secure mode: moving, bombs, chain reactions, winner |
+| Close or kill a player's window | Host prints `Player N left` (at once, or after 3 s for a crash) |
+| Joins without security but not with it | The network works; check the join code, port TCP 7390 and the clocks (see Troubleshooting) |
+
 ### Controls
 
 | Key | Action |
@@ -298,7 +322,11 @@ cmake -B build-asan -DBA_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug     # AddressSanit
 ./build/ba_client --name intruder
 ```
 
-To show encryption, capture UDP ports 7400-7500 in Wireshark with and without `--secure`. Without it the RTPS packets contain the player names in plain text, with it the payload is unreadable.
+The same across two machines with the scripts: host with `./scripts/host.sh` (secure), then on the other
+machine run `INSECURE=1 ./scripts/join.sh HOST_ADDRESS Intruder`. It stays on Connecting and never gets a
+player slot, while players who joined with the code play normally.
+
+To show encryption, capture UDP ports 7400-7600 in Wireshark once with `INSECURE=1 ./scripts/host.sh` and once with `./scripts/host.sh` (or with and without `--secure`). Without security the RTPS packets contain the player names in plain text, with it the payload is unreadable.
 
 To show signing, change one character in `security/out/permissions.p7s` and start the server: it stops with `PKCS7_signatureVerify: digest failure`.
 
@@ -308,6 +336,7 @@ To show signing, change one character in `security/out/permissions.p7s` and star
 |---|---|---|
 | Game rules | `ctest --test-dir build` (13 tests, 99 checks: map, movement, bombs, explosions, chain reactions, power-ups, rounds, timeouts, snapshots) | all pass (checked on Cyclone DDS 0.10.5) |
 | Interpolation | `ctest` (17 checks): buffer, reordering, server restart, respawn, and a jitter simulation | no freezes or jumps up to 45 ms jitter |
+| Scripts without security | `INSECURE=1 ./scripts/host.sh` + `INSECURE=1 ./scripts/join.sh HOST_ADDRESS Tester` (one machine, Cyclone DDS 0.8.2) | `Player 1 joined (Tester)`, `Player 1 left` on close, no security files made, clean shutdown |
 | Still to do | security demo, sanitizer build, and a real play session with several players | TODO: write down what we saw |
 
 ## Troubleshooting
