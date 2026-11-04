@@ -103,3 +103,8 @@ add_test(NAME game_rules COMMAND test_game)
 add_executable(test_interp tests/test_interp.c)
 target_link_libraries(test_interp PRIVATE ba_client_net)
 add_test(NAME interpolation COMMAND test_interp)
+
+# Security check (not in ctest, it needs the files from gen_security.sh):
+#   ./build/access_check security/out/client1.xml
+add_executable(access_check tests/access_check.c)
+target_link_libraries(access_check PRIVATE ba_common)
