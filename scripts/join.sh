@@ -29,7 +29,12 @@ is_identity() { [[ "$1" =~ ^client[1-5]$ ]]; }
 is_code()     { [[ "$1" =~ ^[A-Za-z0-9]{4}-[A-Za-z0-9]{4}$ ]]; }
 
 host_ip="$SERVER"
-if [ "$SERVER" = "local" ]; then host_ip="$(show_ips | head -n1 || true)"; fi
+PRIO=""
+if [ "$SERVER" = "local" ]; then
+    host_ip="$(show_ips | head -n1 || true)"
+    PRIO="nice -n 5"    # on the host, the server goes first
+fi
+use_gpu
 [ -n "$host_ip" ] || { echo "Could not find an address for this machine."; exit 1; }
 
 peers=()
@@ -45,7 +50,7 @@ if [ "${INSECURE:-}" = "1" ]; then
     NAME="${ARG2:-player}"
     echo "INSECURE mode: no authentication, no encryption."
     write_config none "$SEC/local_none.xml" ${peers[@]+"${peers[@]}"}
-    exec ./build/ba_client --name "$NAME" --secure "$SEC/local_none.xml"
+    exec $PRIO ./build/ba_client --name "$NAME" --secure "$SEC/local_none.xml"
 fi
 
 if [ "$SERVER" = "local" ]; then
@@ -78,4 +83,4 @@ fi
 need_files "$ID"
 write_config "$ID" "$SEC/local_$ID.xml" ${peers[@]+"${peers[@]}"}
 echo "Joining $host_ip as $NAME ($ID)"
-exec ./build/ba_client --name "$NAME" --secure "$SEC/local_$ID.xml"
+exec $PRIO ./build/ba_client --name "$NAME" --secure "$SEC/local_$ID.xml"

@@ -191,7 +191,12 @@ def serve(args):
                     log(f"{ip}: wrong join code ({failures}/{MAX_FAILURES})")
                     send(conn, {"error": "wrong join code"})
                     continue
-                slot = slots[given % len(slots)]
+                if given >= len(slots):
+                    # Never give the same player number to two machines.
+                    log(f"{ip}: no player certificates left")
+                    send(conn, {"error": "the game is full (no player certificates left)"})
+                    continue
+                slot = slots[given]
                 cert = sign_csr(d, csr, slot)
                 send(conn, {"slot": slot, "ca": ca, "cert": cert,
                             "governance": gov, "permissions": perm,
@@ -229,7 +234,7 @@ def fetch(args):
                      "  scripts\\windows_setup.ps1 again on the host (it opens TCP 7390).")
 
         if "error" in resp:
-            sys.exit(f"[join-code] Host said: {resp['error']}. Check the code.")
+            sys.exit(f"[join-code] Host said: {resp['error']}.")
         try:
             slot, ca, cert = resp["slot"], resp["ca"], resp["cert"]
             gov, perm = resp["governance"], resp["permissions"]

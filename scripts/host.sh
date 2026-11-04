@@ -16,6 +16,11 @@ cd "$ROOT"
 
 [ -x build/ba_server ] || { echo "Build first: cmake -B build && cmake --build build"; exit 1; }
 
+# Give the server a higher priority, so a game window on this machine
+# cannot slow it down (needs root, which WSL usually is).
+PRIO=""
+if [ "$(id -u)" = 0 ]; then PRIO="nice -n -10"; fi
+
 ips="$(show_ips)"
 first_ip="$(echo "$ips" | head -n1)"
 echo "Addresses of this machine:"
@@ -26,7 +31,7 @@ if [ "${INSECURE:-}" = "1" ]; then
     echo "INSECURE mode: no authentication, no encryption."
     echo "Players join with:  INSECURE=1 ./scripts/join.sh ${first_ip:-HOST_ADDRESS}"
     write_config none "$SEC/local_none.xml" "$@"
-    exec ./build/ba_server --secure "$SEC/local_none.xml"
+    exec $PRIO ./build/ba_server --secure "$SEC/local_none.xml"
 fi
 
 if [ ! -f "$SEC/server_cert.pem" ] || [ ! -f "$SEC/ca_key.pem" ]; then
@@ -54,4 +59,4 @@ echo "    ./scripts/join.sh local client1 YourName"
 echo "=============================================================="
 echo
 
-./build/ba_server --secure "$SEC/local_server.xml"
+$PRIO ./build/ba_server --secure "$SEC/local_server.xml"

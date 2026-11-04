@@ -24,6 +24,21 @@ find_plugin() {
     echo "${p:-dds_security_$1}"
 }
 
+# In WSL, draw with the GPU (D3D12) when it works, not with the CPU (llvmpipe).
+# Needs glxinfo (sudo apt install mesa-utils). Does nothing if it cannot check.
+use_gpu() {
+    if [ -n "${GALLIUM_DRIVER:-}" ] || [ ! -e /dev/dxg ] || ! command -v glxinfo > /dev/null; then
+        return 0
+    fi
+    if GALLIUM_DRIVER=d3d12 glxinfo -B 2> /dev/null | grep -qi "renderer string: d3d12"; then
+        export GALLIUM_DRIVER=d3d12
+        echo "Drawing with the GPU (D3D12)."
+    elif glxinfo -B 2> /dev/null | grep -qi llvmpipe; then
+        echo "Note: the window is drawn by the CPU (llvmpipe), which can feel slow."
+        echo "Update the Windows GPU driver and run 'wsl --update' to use the GPU."
+    fi
+}
+
 # Stop with a clear message if a security file is missing
 need_files() {   # $1 = identity (server, client1, ...)
     local f missing=0
