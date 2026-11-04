@@ -51,7 +51,8 @@ static void usage(const char *prog)
     printf("Usage: %s [--name NAME] [--secure CONFIG.xml] [-v]\n"
            "  --name    name shown to other players (max 15 chars)\n"
            "  --secure  enable DDS Security with the given Cyclone config\n"
-           "  -v        verbose debug logging\n", prog);
+           "  -v        verbose debug logging\n"
+           "  --spoof N TEST ONLY: send input as player N (the server must reject it)\n", prog);
 }
 
 int main(int argc, char **argv)
@@ -68,6 +69,8 @@ int main(int argc, char **argv)
             opts.config = argv[++i];
         else if (!strcmp(argv[i], "-v"))
             ba_verbose = 1;
+        else if (!strcmp(argv[i], "--spoof") && i + 1 < argc)
+            opts.spoof_id = atoi(argv[++i]);
         else
         {
             usage(argv[0]);
