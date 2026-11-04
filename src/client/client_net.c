@@ -34,6 +34,12 @@ struct ba_client
     /* Only touched by the DDS thread. */
     uint64_t nonce;
     uint32_t seq;
+
+    /* Network meter, on when the environment variable BA_NETSTATS is set. */
+    bool stat_on;
+    int64_t stat_next_ms, stat_last_ms, stat_max_gap_ms;
+    uint32_t stat_last_tick;
+    int stat_got, stat_lost;
 };
 
 /* DDS thread */
@@ -69,6 +75,23 @@ static void take_join_responses(ba_client *c)
     }
 }
 
+/* Count snapshots and gaps, to see how good the network is. */
+static void record_snapshot(ba_client *c, uint32_t tick)
+{
+    int64_t now = ba_now_ms();
+    if (c->stat_last_ms && now - c->stat_last_ms > c->stat_max_gap_ms)
+        c->stat_max_gap_ms = now - c->stat_last_ms;
+    if (c->stat_last_tick && tick > c->stat_last_tick && tick - c->stat_last_tick < 600)
+    {
+        int steps = (int)((tick - c->stat_last_tick) / BA_SNAPSHOT_EVERY);
+        if (steps > 1)
+            c->stat_lost += steps - 1;  /* snapshots that never arrived */
+    }
+    c->stat_last_ms = now;
+    c->stat_last_tick = tick;
+    c->stat_got++;
+}
+
 static void take_game_state(ba_client *c)
 {
     Blast_GameState buf[READ_BATCH];
@@ -92,6 +115,8 @@ static void take_game_state(ba_client *c)
             if (v->have_state && buf[i].tick <= v->curr.tick &&
                 v->curr.tick - buf[i].tick < 600)
                 continue;
+            if (c->stat_on)
+                record_snapshot(c, buf[i].tick);
             v->prev = v->have_state ? v->curr : buf[i];
             v->prev_ns = v->have_state ? v->curr_ns : now;
             v->curr = buf[i];
@@ -189,6 +214,16 @@ static void *net_thread(void *arg)
         take_map(c);
         take_game_state(c);
 
+        if (c->stat_on && ba_now_ms() >= c->stat_next_ms)
+        {
+            if (c->stat_next_ms)
+                BA_LOG("[net] snapshots %d/s, lost %d, longest gap %lld ms",
+                       c->stat_got, c->stat_lost, (long long)c->stat_max_gap_ms);
+            c->stat_got = c->stat_lost = 0;
+            c->stat_max_gap_ms = 0;
+            c->stat_next_ms = ba_now_ms() + 1000;
+        }
+
         pthread_mutex_lock(&c->lock);
         int my_id = c->view.my_id;
         bool slot_gone = my_id > 0 && c->view.have_state &&
@@ -253,6 +288,7 @@ ba_client *client_start(const ba_client_opts *opts)
     if (!c)
         return NULL;
     c->opts = *opts;
+    c->stat_on = getenv("BA_NETSTATS") != NULL;
     snprintf(c->name, sizeof c->name, "%s", opts->name ? opts->name : "");
     c->view.my_id = -1;
     c->nonce = ba_random_u64();
